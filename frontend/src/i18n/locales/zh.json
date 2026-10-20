@@ -293,6 +293,8 @@
   "error.description": "应用程序发生了意外错误。",
   "error.code": "错误代码：",
   "error.reload": "重新加载页面",
+  "error.tryAgain": "重试",
+  "error.reportIssue": "在 GitHub 上报告问题",
 
   "a11y.mainNavigation": "主导航",
   "a11y.mobileNavigationMenu": "移动导航菜单",

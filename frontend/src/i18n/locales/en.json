@@ -320,6 +320,8 @@
   "error.description": "An unexpected error has occurred in the application.",
   "error.code": "Error Code:",
   "error.reload": "Reload Page",
+  "error.tryAgain": "Try Again",
+  "error.reportIssue": "Report Issue on GitHub",
 
   "a11y.mainNavigation": "Main navigation",
   "a11y.mobileNavigationMenu": "Mobile navigation menu",
