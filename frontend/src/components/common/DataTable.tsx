@@ -1,12 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 import styles from './DataTable.module.css';
 
 export type SortDirection = 'asc' | 'desc';
+export type MobileColumnPriority = 'primary' | 'secondary' | 'hidden-mobile';
+export type MobileTableView = 'scroll' | 'cards';
 
 export interface DataTableColumn<T> {
   key: string;
   header: string;
+  priority?: MobileColumnPriority;
   sortable?: boolean;
   render?: (row: T) => React.ReactNode;
   className?: string;
@@ -50,6 +53,7 @@ export interface DataTableProps<T> {
   onSort?: (key: string, direction: SortDirection) => void;
   rowClassName?: (row: T) => string;
   getRowTestId?: (row: T) => string;
+  mobileView?: MobileTableView;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -122,6 +126,7 @@ export function DataTable<T>({
   onSort,
   rowClassName,
   getRowTestId,
+  mobileView = 'scroll',
 }: DataTableProps<T>) {
   // Normalise `data` vs legacy `rows` prop
   const allRows: T[] = data ?? rowsProp ?? [];
@@ -134,6 +139,36 @@ export function DataTable<T>({
   const rowRefs = useRef<Array<HTMLTableRowElement | null>>([]);
   const [scrollTop, setScrollTop] = useState(0);
   const [activeRowIndex, setActiveRowIndex] = useState(0);
+  const [scrollState, setScrollState] = useState({ overflowing: false, left: false, right: false });
+
+  const updateScrollState = useCallback(() => {
+    const viewport = scrollRef.current;
+    if (!viewport) return;
+
+    const nextState = {
+      overflowing: viewport.scrollWidth > viewport.clientWidth,
+      left: viewport.scrollLeft > 0,
+      right: viewport.scrollLeft + viewport.clientWidth < viewport.scrollWidth - 1,
+    };
+    setScrollState((current) => (
+      current.overflowing === nextState.overflowing && current.left === nextState.left && current.right === nextState.right
+        ? current
+        : nextState
+    ));
+  }, []);
+
+  useEffect(() => {
+    const viewport = scrollRef.current;
+    if (!viewport) return;
+
+    updateScrollState();
+    if (typeof ResizeObserver === 'undefined') return;
+
+    const observer = new ResizeObserver(updateScrollState);
+    observer.observe(viewport);
+    if (viewport.firstElementChild) observer.observe(viewport.firstElementChild);
+    return () => observer.disconnect();
+  }, [columns.length, rows.length, updateScrollState]);
 
   // Re-sync controlled pageSize if the prop changes
   useEffect(() => {
@@ -264,145 +299,111 @@ export function DataTable<T>({
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <div className={`${styles.outerWrapper} ${className ?? ''}`}>
-      <div className={styles.wrapper} style={{ maxHeight }}>
-        <div
-          ref={scrollRef}
-          className={styles.viewport}
-          style={virtualization ? { maxHeight, overflowY: 'auto' } : undefined}
-          onScroll={
-            virtualization
-              ? (event) => setScrollTop(event.currentTarget.scrollTop)
-              : undefined
-          }
-        >
-          <table className={styles.table}>
-            <thead className={stickyHeader ? styles.stickyHeader : ''}>
-              <tr>
-                {onRowSelect && <th className={styles.selectionCell} aria-label="Row selection" />}
-                {columns.map((column) => (
-                  <th
-                    key={column.key}
-                    className={column.sortable ? styles.sortableHeader : undefined}
-                    style={{ width: column.width, minWidth: column.minWidth }}
-                  >
-                    {column.sortable ? (
-                      <button
-                        type="button"
-                        className={styles.sortButton}
-                        onClick={() => handleSort(column)}
-                        aria-label={`Sort by ${column.header}`}
-                        aria-sort={
-                          sortKey === column.key
-                            ? sortDirection === 'asc'
-                              ? 'ascending'
-                              : 'descending'
-                            : 'none'
-                        }
-                      >
-                        <span>{column.header}</span>
-                        {sortKey === column.key ? (
-                          sortDirection === 'asc' ? (
-                            <ArrowUp size={12} />
-                          ) : (
-                            <ArrowDown size={12} />
-                          )
-                        ) : (
-                          <ArrowUpDown size={12} />
-                        )}
-                      </button>
-                    ) : (
-                      column.header
-                    )}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-
-            <tbody>
-              {loading
-                ? Array.from({ length: pageSize < 10 ? pageSize : 5 }).map((_, i) => (
-                    <SkeletonRow key={i} colCount={columns.length + (onRowSelect ? 1 : 0)} />
-                  ))
-                : visibleRows.map((row, rowIndex) => {
-                    const rowKey = resolveRowKey(row, rowIndex);
-                    const isSelected = selectedRowKeys.includes(rowKey);
-                    const classes = [styles.row, rowClassName ? rowClassName(row) : ''];
-                    if (isSelected) classes.push(styles.selectedRow);
-
-                    return (
-                      <tr
-                        key={rowKey}
-                        ref={(element) => {
-                          rowRefs.current[rowIndex] = element;
-                        }}
-                        data-testid={
-                          getRowTestId ? getRowTestId(row) : `row-${String(rowKey)}`
-                        }
-                        className={classes.join(' ')}
-                        onClick={() => onRowClick?.(row)}
-                        onFocus={() => setActiveRowIndex(rowIndex)}
-                        onKeyDown={(event) => handleRowKeyDown(event, rowIndex, row)}
-                        tabIndex={rowIndex === activeRowIndex ? 0 : -1}
-                        aria-selected={onRowSelect ? isSelected : undefined}
-                      >
-                        {onRowSelect && (
-                          <td className={styles.selectionCell}>
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              onChange={() => onRowSelect(row)}
-                              onClick={(event) => event.stopPropagation()}
-                              aria-label={`Select row ${String(rowKey)}`}
-                            />
-                          </td>
-                        )}
-                        {columns.map((column) => (
-                          <td
-                            key={`${String(rowKey)}-${column.key}`}
-                            className={column.className}
-                            title={
-                              typeof getCellValue(row, column.key) === 'string'
-                                ? String(getCellValue(row, column.key))
-                                : undefined
-                            }
-                          >
-                            {column.render
-                              ? column.render(row)
-                              : (getCellValue(row, column.key) ?? '—')}
-                          </td>
-                        ))}
-                      </tr>
-                    );
-                  })}
-            </tbody>
-          </table>
-        </div>
-
-        {virtualization && !loading && itemCount > 0 && (
-          <div className={styles.virtualizationMeta}>
-            Showing {Math.max(0, endIndex - startIndex)} of {itemCount} rows
-          </div>
-        )}
-      </div>
-
-      {/* ── Pagination ── */}
-      {isPaginated && !loading && totalPages > 1 && (
-        <div className={styles.pagination} role="navigation" aria-label="Table pagination">
-          <div className={styles.paginationLeft}>
-            {pageSizeOptions.length > 1 && (
-              <label className={styles.pageSizeLabel}>
-                Rows per page:
-                <select
-                  className={styles.pageSizeSelect}
-                  value={pageSize}
-                  onChange={(e) => handlePageSizeChange(Number(e.target.value))}
-                  aria-label="Rows per page"
+    <div
+      className={`${styles.wrapper} ${className ?? ''}`}
+      style={{ maxHeight }}
+      data-overflowing={scrollState.overflowing || undefined}
+      data-scroll-left={scrollState.left || undefined}
+      data-scroll-right={scrollState.right || undefined}
+    >
+      <div
+        ref={scrollRef}
+        className={styles.viewport}
+        style={virtualization ? { maxHeight, overflowY: 'auto' } : undefined}
+        onScroll={(event) => {
+          if (virtualization) setScrollTop(event.currentTarget.scrollTop);
+          updateScrollState();
+        }}
+      >
+        <table className={`${styles.table} ${mobileView === 'cards' ? styles.mobileCards : ''}`} data-mobile-view={mobileView}>
+          <thead className={stickyHeader ? styles.stickyHeader : ''}>
+            <tr>
+              {onRowSelect && <th className={styles.selectionCell} aria-label="Row selection" />}
+              {columns.map((column) => (
+                <th
+                  key={column.key}
+                  className={[
+                    column.sortable ? styles.sortableHeader : '',
+                    column.priority === 'primary' ? styles.primaryColumn : '',
+                    column.priority === 'hidden-mobile' ? styles.hiddenMobileColumn : '',
+                  ].filter(Boolean).join(' ')}
+                  data-priority={column.priority ?? 'secondary'}
+                  style={{ width: column.width, minWidth: column.minWidth, resize: 'horizontal' }}
+                  aria-sort={
+                    column.sortable
+                      ? sortKey === column.key
+                        ? sortDirection === 'asc'
+                          ? 'ascending'
+                          : 'descending'
+                        : 'none'
+                      : undefined
+                  }
                 >
-                  {pageSizeOptions.map((opt) => (
-                    <option key={opt} value={opt}>
-                      {opt}
-                    </option>
+                  {column.sortable ? (
+                    <button
+                      type="button"
+                      className={styles.sortButton}
+                      onClick={() => handleSort(column)}
+                      aria-label={`Sort by ${column.header}`}
+                    >
+                      <span>{column.header}</span>
+                      {sortKey === column.key ? (
+                        sortDirection === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />
+                      ) : (
+                        <ArrowUpDown size={12} />
+                      )}
+                    </button>
+                  ) : (
+                    column.header
+                  )}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {visibleRows.map((row, rowIndex) => {
+              const rowKey = getRowKey(row);
+              const isSelected = selectedRowKeys.includes(rowKey);
+              const classes = [styles.row, rowClassName ? rowClassName(row) : ''];
+              if (isSelected) classes.push(styles.selectedRow);
+
+              return (
+                <tr
+                  key={rowKey}
+                  ref={(element) => { rowRefs.current[rowIndex] = element; }}
+                  data-testid={getRowTestId ? getRowTestId(row) : `agent-row-${String(rowKey)}`}
+                  className={classes.join(' ')}
+                  onClick={() => onRowClick?.(row)}
+                  onFocus={() => setActiveRowIndex(rowIndex)}
+                  onKeyDown={(event) => handleRowKeyDown(event, rowIndex, row)}
+                  tabIndex={rowIndex === activeRowIndex ? 0 : -1}
+                  aria-selected={onRowSelect ? isSelected : undefined}
+                >
+                  {onRowSelect && (
+                    <td className={styles.selectionCell}>
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => handleSelect(rowKey, row)}
+                        onClick={(event) => event.stopPropagation()}
+                        aria-label={`Select row ${String(rowKey)}`}
+                      />
+                    </td>
+                  )}
+                  {columns.map((column) => (
+                    <td
+                      key={`${String(rowKey)}-${column.key}`}
+                      className={[
+                        column.className ?? '',
+                        column.priority === 'primary' ? styles.primaryColumn : '',
+                        column.priority === 'hidden-mobile' ? styles.hiddenMobileColumn : '',
+                      ].filter(Boolean).join(' ')}
+                      data-label={column.header}
+                      data-priority={column.priority ?? 'secondary'}
+                      title={typeof getCellValue(row, column.key) === 'string' ? String(getCellValue(row, column.key)) : undefined}
+                    >
+                      {column.render ? column.render(row) : getCellValue(row, column.key) ?? '—'}
+                    </td>
                   ))}
                 </select>
               </label>
